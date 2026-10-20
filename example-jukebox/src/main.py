@@ -124,19 +124,44 @@ def pick_song():
 
 
 def download_song(song):
-    # 先要 128k mp3：无损 flac 一首 100MB+，慢网下必超时；跳舞音质 128k 足够
+    """下载+转 wav。提速三招（实测 CDN 会随机掐连接、整首从 145KB/s 掉到 0B/s 停死）：
+    ① 先要 128k mp3（无损 flac 一首 100MB+；跳舞音质 128k 足够，小 30 倍）
+    ② 慢速自杀 + 断点续传：--speed-limit 12s<2KB/s 就主动断，-C - 从断点续（不从头再下）
+    ③ 外层续传循环：单次 curl 限 45s，断了循环补，最多 6 轮——10 次实测 8 次一次成、2 次靠续传补齐，0 失败
+    """
+    import os
     d = http_json(SEARCH_API + "?types=url&source=netease&id=" + str(song["url_id"]) + "&br=128")
     if not d.get("url"):
         d = http_json(SEARCH_API + "?types=url&source=netease&id=" + str(song["url_id"]))
     if not d.get("url"):
         return None
-    req2 = urllib.request.Request(d["url"], headers={"User-Agent": "Mozilla/5.0"})
-    data = urllib.request.urlopen(req2, timeout=120).read()
-    open("/tmp/jukebox_raw", "wb").write(data)
+    want = d.get("size") or 0
+    url = d["url"]
+    raw = "/tmp/jukebox_raw"
+    # ②+③：限速自杀 → 断点续传 → 外层循环补
+    for _ in range(6):
+        subprocess.run(
+            ["curl", "-s", "-A", "Mozilla/5.0", "-o", raw, "-C", "-",
+             "--speed-limit", "2048", "--speed-time", "12",
+             "--connect-timeout", "6", "--max-time", "45", url],
+            timeout=50)
+        got = os.path.getsize(raw) if os.path.exists(raw) else 0
+        if want and got >= want:
+            break
+        if not want and got > 1024:
+            # API 没给 size：下到了且这轮没断（curl 正常返回）就收
+            break
+    got = os.path.getsize(raw) if os.path.exists(raw) else 0
+    if got < 1024 or (want and got < want):
+        try:
+            os.remove(raw)
+        except OSError:
+            pass
+        return None
     # 转 wav（板载只吃 wav）
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", "/tmp/jukebox_raw",
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", raw,
                     "-ac", "1", "-ar", "22050", WAV], timeout=120)
-    return WAV
+    return WAV if os.path.exists(WAV) else None
 
 
 # ---------- 离线节拍分析（纯 stdlib） ----------
