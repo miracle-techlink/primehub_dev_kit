@@ -22,21 +22,16 @@ import urllib.parse
 import urllib.request
 
 # ★★★ 现场开发者改这里 ★★★
-# 点歌方式（自动选择，优先级从高到低）：
-#   ① 歌单文件：技能包里放 media/songlist.txt，一行一首（"歌名 歌手"）——想点歌改这个文件
-#   ② 默认歌单：下面 PLAYLIST 列表（改这里等于换常驻曲目）
-#   ③ 热门榜单：①②都空时自动抓网易云热歌榜随机一首（每次不同）
-# 选取策略：从歌单里随机抽一首；已播过的歌记录在 /tmp/jukebox_history.txt，尽量不重样
-PLAYLIST = [
-    "稻香 周杰伦",
-    "晴天 周杰伦",
-    "告白气球 周杰伦",
-    "孤勇者 陈奕迅",
-    "小苹果 筷子兄弟",
-]
+# 点歌方式（默认=纯 API 点歌，不写死任何歌）：
+#   默认：每次运行联网抓网易云热歌榜 → 随机点一首 → gdstudio API 搜+下载+转 wav
+#   固定曲目（可选覆盖）：技能包放 media/songlist.txt（一行一首"歌名 歌手"）
+#                        或往下面 PLAYLIST 里加歌 = 常驻歌单
+# 已播记录 /tmp/jukebox_history.txt，尽量不重样；搜不到/下不动自动换下一首
+PLAYLIST = []               # 默认空 = 联网热歌榜随机；想固定曲目就加"歌名 歌手"
 LAT_ANIM = 0.30           # anim 请求→真正起跳的实测延迟（提前发）
 LAT_MUSIC = 0.06          # 音频状态翻 1 与真实出声的差（实测 +0.056s）
 INTRO = "收到点歌！我去网上找这首歌，找到就马上开跳！"
+SONG_ANNOUNCE = "歌曲就位！歌名 %s，节奏 %d 拍每分钟，开跳！"
 OUTRO = "这首歌跳完了，还想听什么，尽管点！"
 MAX_DANCE_SEC = 90        # 最多跳这么久就收尾（保护电机）
 SEARCH_API = "https://music-api.gdstudio.xyz/api.php"
@@ -82,22 +77,20 @@ def find_song(name):
     return songs[0] if songs else None
 
 
-# ---------- 点歌：歌单文件 → 默认歌单 → 热门榜单 ----------
+# ---------- 点歌：默认联网热歌榜，歌单只是可选覆盖 ----------
 def load_songlist():
-    """点歌入口：读技能包的 media/songlist.txt（用户点歌就改这个文件）。"""
+    """点歌入口。默认联网抓热歌榜（每次不同）；media/songlist.txt 或 PLAYLIST 非空才固定曲目。"""
     import os
+    # ① 固定歌单（可选）：技能包 media/songlist.txt + PLAYLIST
     candidates = []
-    # ① 歌单文件（优先）：技能包 media/songlist.txt，一行一首
     here = os.path.dirname(os.path.abspath(__file__))
     for rel in ("media/songlist.txt", "../media/songlist.txt", "../../media/songlist.txt"):
         p = os.path.join(here, rel)
         if os.path.exists(p):
             lines = [l.strip() for l in open(p, encoding="utf-8") if l.strip() and not l.startswith("#")]
             candidates += lines
-    # ② 默认歌单
-    if not candidates:
-        candidates = list(PLAYLIST)
-    # ③ 热门榜单（歌单为空才联网抓）
+    candidates += PLAYLIST
+    # ② 默认：联网热歌榜（纯 API 点歌，每次运行随机不重样）
     if not candidates:
         try:
             d = http_json(HOT_CHART_API)
@@ -131,15 +124,18 @@ def pick_song():
 
 
 def download_song(song):
-    d = http_json(SEARCH_API + "?types=url&source=netease&id=" + str(song["url_id"]))
+    # 先要 128k mp3：无损 flac 一首 100MB+，慢网下必超时；跳舞音质 128k 足够
+    d = http_json(SEARCH_API + "?types=url&source=netease&id=" + str(song["url_id"]) + "&br=128")
+    if not d.get("url"):
+        d = http_json(SEARCH_API + "?types=url&source=netease&id=" + str(song["url_id"]))
     if not d.get("url"):
         return None
     req2 = urllib.request.Request(d["url"], headers={"User-Agent": "Mozilla/5.0"})
-    data = urllib.request.urlopen(req2, timeout=60).read()
+    data = urllib.request.urlopen(req2, timeout=120).read()
     open("/tmp/jukebox_raw", "wb").write(data)
     # 转 wav（板载只吃 wav）
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", "/tmp/jukebox_raw",
-                    "-ac", "1", "-ar", "22050", WAV], timeout=60)
+                    "-ac", "1", "-ar", "22050", WAV], timeout=120)
     return WAV
 
 
@@ -230,15 +226,23 @@ speak(INTRO)
 requested, stat = pick_song()
 print("PICK: %s (%s)" % (requested, stat), flush=True)
 if not requested:
-    speak("歌单是空的，先在技能包里放一个 songlist 文件！")
+    speak("网上没拉到歌单，稍后再试一次！")
     raise SystemExit("NO_SONGLIST")
-song = find_song(requested)
-if not song:
-    speak("没找到这首歌，换一首试试！")
-    raise SystemExit("SONG_NOT_FOUND")
-print("SONG: %s - %s" % (song.get("name"), "/".join(song.get("artist", []) or [])), flush=True)
-
-path = download_song(song)
+# 搜不到/下不动就自动换歌再试（最多 3 首）
+song = None
+path = None
+for _ in range(3):
+    song = find_song(requested)
+    if not song:
+        print("SEARCH_MISS: %s" % requested, flush=True)
+    else:
+        print("SONG: %s - %s" % (song.get("name"), "/".join(song.get("artist", []) or [])), flush=True)
+        path = download_song(song)
+        if path:
+            break
+        print("DOWNLOAD_RETRY", flush=True)
+    requested, stat = pick_song()
+    print("PICK: %s (%s)" % (requested, stat), flush=True)
 if not path:
     speak("这首歌下载失败了，换一首试试！")
     raise SystemExit("DOWNLOAD_FAILED")
@@ -251,7 +255,7 @@ if not info:
 else:
     beat, first = info["beat"], info["first"]
 
-speak("歌曲就位！歌名 %s，节奏 %d 拍每分钟，开跳！" % (song.get("name"), round(60.0 / beat)))
+speak(SONG_ANNOUNCE % (song.get("name"), round(60.0 / beat)))
 time.sleep(0.5)
 robot.play_light(color=1, mode=3)
 

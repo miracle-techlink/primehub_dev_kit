@@ -451,6 +451,6 @@ python3 primehub_publish.py delete <id>   # 删除
 | 音频播放与状态处理 | `play_audio_file` 调用处 + `music_really_over()`（状态抖动滤波） |
 | 音频持续时动作怎么发 | 主循环里 `play_animation(anim, interrupt=False)` |
 | 持续随机动作池 | `MOVE_POOL` + `next_move()` |
-| 换自己要的东西 | `media/songlist.txt` 点歌单（或顶部 `PLAYLIST` / `MOVE_POOL`） |
+| 换自己要的东西 | 默认热歌榜随机；固定曲目用 `media/songlist.txt`；舞池用 `MOVE_POOL` |
 
 改之前先把原版跑通（第 5 步流程），确认环境没问题再动手。
