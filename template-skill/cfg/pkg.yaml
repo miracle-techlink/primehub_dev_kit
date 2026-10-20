@@ -1,6 +1,0 @@
-package_name: photo_director_q1
-version: 1.0.0
-description: 合影导演 Q1 版——报幕、三连拍换姿势、口令倒计时、拍完开心庆祝
-author: workshop
-robot_model: q1
-sdk_version: v1.0.0

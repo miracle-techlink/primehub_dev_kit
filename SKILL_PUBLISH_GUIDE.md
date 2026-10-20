@@ -9,12 +9,11 @@
 
 ## 开始前：拿到开发工具包（dev kit）
 
-本手册的命令基于一个 5 文件工具包（模板技能 + 打包器 + 真机调试 harness + PrimeHub 发布客户端 + token 提取器），拿到手解压即用：
+本手册的命令基于一个 5 文件工具包（示例技能 + 打包器 + 真机调试 harness + PrimeHub 发布客户端 + token 提取器），拿到手解压即用：
 
 ```
 primehub_dev_kit/
-├── template-skill/      技能模板（cfg/pkg.yaml + src/main.py + readme.md）——复制成你的技能
-├── example-jukebox/     完整真实案例：点歌台（联网搜歌+节拍分析+随机伴舞，已上架 PrimeHub）
+├── example-jukebox/     技能基底 & 完整真实案例：点歌台（任意点歌+联网搜歌+节拍分析+随机伴舞，已上架 PrimeHub）——复制成你的技能再改
 ├── pack.py              打包器：技能目录 → .rpk
 ├── deploy_test.py       真机调试 harness（scp 到机器人跑）
 ├── primehub_publish.py  PrimeHub 发布/删除/查询（依赖同目录 primehub_client.py）
@@ -158,8 +157,8 @@ T1 常用：1 打招呼 / 2 握手 / 6 比心 / 7、10、11 跳舞 / 20-22 拍�
 
 ### 2.5 给 agent 的提示词模板
 
-> 读 `SKILL_PUBLISH_GUIDE.md` 的 §2 契约。基于 dev kit 的 `template-skill/` 模板
->（参考 `example-jukebox/` 真实案例），改成：〈你的场景描述〉。
+> 读 `SKILL_PUBLISH_GUIDE.md` 的 §2 契约。基于 dev kit 的 `example-jukebox/`（完整真实案例，
+> 从它复制改起），改成：〈你的场景描述〉。
 > 约束：只用 upper_body 动作、纯 stdlib、遵守 §2.4 平台约束。
 
 ---
@@ -170,7 +169,7 @@ T1 常用：1 打招呼 / 2 握手 / 6 比心 / 7、10、11 跳舞 / 20-22 拍�
 
 ```bash
 cd primehub_dev_kit
-cp -r template-skill my-skill               # 复制模板（想直接学全功能真实案例，看 example-jukebox/）
+cp -r example-jukebox my-skill              # 复制完整案例改起（搜歌/节拍/伴舞逻辑留着或删掉都行）
 ```
 
 任何技能的通用编程模型都是一样的：
@@ -452,6 +451,6 @@ python3 primehub_publish.py delete <id>   # 删除
 | 音频播放与状态处理 | `play_audio_file` 调用处 + `music_really_over()`（状态抖动滤波） |
 | 音频持续时动作怎么发 | 主循环里 `play_animation(anim, interrupt=False)` |
 | 持续随机动作池 | `MOVE_POOL` + `next_move()` |
-| 换自己要的东西 | 顶部 `SONG_NAME` / `MOVE_POOL` 两个常量 |
+| 换自己要的东西 | `media/songlist.txt` 点歌单（或顶部 `PLAYLIST` / `MOVE_POOL`） |
 
 改之前先把原版跑通（第 5 步流程），确认环境没问题再动手。

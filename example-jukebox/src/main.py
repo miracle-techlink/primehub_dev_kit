@@ -22,13 +22,26 @@ import urllib.parse
 import urllib.request
 
 # ★★★ 现场开发者改这里 ★★★
-SONG_NAME = "稻香 周杰伦"  # 点的歌（歌名+歌手，越具体越准）
+# 点歌方式（自动选择，优先级从高到低）：
+#   ① 歌单文件：技能包里放 media/songlist.txt，一行一首（"歌名 歌手"）——想点歌改这个文件
+#   ② 默认歌单：下面 PLAYLIST 列表（改这里等于换常驻曲目）
+#   ③ 热门榜单：①②都空时自动抓网易云热歌榜随机一首（每次不同）
+# 选取策略：从歌单里随机抽一首；已播过的歌记录在 /tmp/jukebox_history.txt，尽量不重样
+PLAYLIST = [
+    "稻香 周杰伦",
+    "晴天 周杰伦",
+    "告白气球 周杰伦",
+    "孤勇者 陈奕迅",
+    "小苹果 筷子兄弟",
+]
 LAT_ANIM = 0.30           # anim 请求→真正起跳的实测延迟（提前发）
 LAT_MUSIC = 0.06          # 音频状态翻 1 与真实出声的差（实测 +0.056s）
 INTRO = "收到点歌！我去网上找这首歌，找到就马上开跳！"
 OUTRO = "这首歌跳完了，还想听什么，尽管点！"
 MAX_DANCE_SEC = 90        # 最多跳这么久就收尾（保护电机）
 SEARCH_API = "https://music-api.gdstudio.xyz/api.php"
+HOT_CHART_API = "https://music.163.com/api/search/get?s=%E7%83%AD%E9%97%A8%E6%AD%8C%E6%9B%B2&type=1&limit=10"  # 网易云「热门歌曲」搜索
+HISTORY = "/tmp/jukebox_history.txt"
 WAV = "/tmp/jukebox_song.wav"
 
 # 自由舞步池（全部 upper_body，室内模式安全）：持续随机抽取，舞蹈类加权
@@ -67,6 +80,54 @@ def find_song(name):
         if s.get("id") and s.get("url_id"):
             return s
     return songs[0] if songs else None
+
+
+# ---------- 点歌：歌单文件 → 默认歌单 → 热门榜单 ----------
+def load_songlist():
+    """点歌入口：读技能包的 media/songlist.txt（用户点歌就改这个文件）。"""
+    import os
+    candidates = []
+    # ① 歌单文件（优先）：技能包 media/songlist.txt，一行一首
+    here = os.path.dirname(os.path.abspath(__file__))
+    for rel in ("media/songlist.txt", "../media/songlist.txt", "../../media/songlist.txt"):
+        p = os.path.join(here, rel)
+        if os.path.exists(p):
+            lines = [l.strip() for l in open(p, encoding="utf-8") if l.strip() and not l.startswith("#")]
+            candidates += lines
+    # ② 默认歌单
+    if not candidates:
+        candidates = list(PLAYLIST)
+    # ③ 热门榜单（歌单为空才联网抓）
+    if not candidates:
+        try:
+            d = http_json(HOT_CHART_API)
+            for s in d.get("result", {}).get("songs", []):
+                artists = "/".join(a["name"] for a in s.get("artists", []))
+                candidates.append("%s %s" % (s.get("name"), artists))
+        except Exception:
+            pass
+    return candidates
+
+
+def pick_song():
+    """从歌单随机抽一首，尽量不重样（历史记录在 /tmp/jukebox_history.txt）。"""
+    import os
+    songs = load_songlist()
+    if not songs:
+        return None, "no songs"
+    try:
+        played = set(l.strip() for l in open(HISTORY, encoding="utf-8"))
+    except OSError:
+        played = set()
+    fresh = [s for s in songs if s not in played]
+    pool = fresh or songs          # 全播过了就允许重复
+    song = random.choice(pool)
+    try:
+        with open(HISTORY, "a", encoding="utf-8") as f:
+            f.write(song + "\n")
+    except OSError:
+        pass
+    return song, ("%d/%d" % (len(fresh or songs), len(songs)))
 
 
 def download_song(song):
@@ -166,7 +227,12 @@ def speak(text):
 
 # ---------- 演出 ----------
 speak(INTRO)
-song = find_song(SONG_NAME)
+requested, stat = pick_song()
+print("PICK: %s (%s)" % (requested, stat), flush=True)
+if not requested:
+    speak("歌单是空的，先在技能包里放一个 songlist 文件！")
+    raise SystemExit("NO_SONGLIST")
+song = find_song(requested)
 if not song:
     speak("没找到这首歌，换一首试试！")
     raise SystemExit("SONG_NOT_FOUND")
@@ -228,9 +294,10 @@ while time.time() < stop_at:
 
 print("FIRED %d bars, tail:" % len(events), events[-4:], flush=True)
 # 音乐自然结束后谢幕（铁律①：TTS 只在音乐外说；按已知时长等待，状态抖动不可信）
-end_at = anchor + min(dur_est, anchor and MAX_DANCE_SEC + (time.time() - anchor) + 2 or 0)
-wait = max(0.0, min(dur_est, MAX_DANCE_SEC) - (time.time() - anchor))
-time.sleep(min(wait, MAX_DANCE_SEC))
+remaining = max(0.5, min(dur_est - (time.time() - anchor), MAX_DANCE_SEC))
+deadline = time.time() + remaining
+while time.time() < deadline and not music_really_over(anchor, dur_est):
+    time.sleep(0.5)
 speak(OUTRO)
 robot.play_animation(3005, interrupt=True)
 time.sleep(4.0)
