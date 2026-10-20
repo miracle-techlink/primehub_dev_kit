@@ -1,0 +1,6 @@
+package_name: jukebox_q1
+version: 1.0.0
+description: 点歌台 Q1 版——说出歌名，机器人联网搜歌下载，对任意歌做节拍分析，卡点起自由舞
+author: workshop
+robot_model: q1
+sdk_version: v1.0.0

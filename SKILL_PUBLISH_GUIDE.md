@@ -14,6 +14,7 @@
 ```
 primehub_dev_kit/
 ├── template-skill/      技能模板（cfg/pkg.yaml + src/main.py + readme.md）——复制成你的技能
+├── example-jukebox/     完整真实案例：点歌台（联网搜歌+节拍分析+随机伴舞，已上架 PrimeHub）
 ├── pack.py              打包器：技能目录 → .rpk
 ├── deploy_test.py       真机调试 harness（scp 到机器人跑）
 ├── primehub_publish.py  PrimeHub 发布/删除/查询（依赖同目录 primehub_client.py）
@@ -157,8 +158,9 @@ T1 常用：1 打招呼 / 2 握手 / 6 比心 / 7、10、11 跳舞 / 20-22 拍�
 
 ### 2.5 给 agent 的提示词模板
 
-> 读 `SKILL_PUBLISH_GUIDE.md` 的 §2 契约。基于 dev kit 的 `template-skill/` 模板，
-> 改成：〈你的场景描述〉。约束：只用 upper_body 动作、纯 stdlib、遵守 §2.4 平台约束。
+> 读 `SKILL_PUBLISH_GUIDE.md` 的 §2 契约。基于 dev kit 的 `template-skill/` 模板
+>（参考 `example-jukebox/` 真实案例），改成：〈你的场景描述〉。
+> 约束：只用 upper_body 动作、纯 stdlib、遵守 §2.4 平台约束。
 
 ---
 
@@ -168,7 +170,7 @@ T1 常用：1 打招呼 / 2 握手 / 6 比心 / 7、10、11 跳舞 / 20-22 拍�
 
 ```bash
 cd primehub_dev_kit
-cp -r template-skill my-skill               # 复制模板
+cp -r template-skill my-skill               # 复制模板（想直接学全功能真实案例，看 example-jukebox/）
 ```
 
 任何技能的通用编程模型都是一样的：
@@ -438,16 +440,18 @@ python3 primehub_publish.py delete <id>   # 删除
 | querySkillList 报 9999 | 参数名 pageNum/pageSize | keywords/page/rows |
 | 同名技能出现两条 | 平台不去重 | 先 delete 再 publish |
 
-## 附录 B：更多示例（向平台索取）
+## 附录 B：完整真实案例（kit 自带）
 
-dev kit 只自带一个 `template-skill/`（台词-动作序列）。想看更多能力维度的样例，
-向平台（PrimeHub 运营/技术支持）索取对应的示例包：
+**`example-jukebox/`（点歌台，已上架 PrimeHub）**——一个从联网到伴舞的全链路真实技能，
+覆盖了绝大多数开发会遇到的写法：
 
-| 想做什么 | 要哪个示例 | 看什么 |
-|---|---|---|
-| 台词+动作序列（基本盘） | template-skill（kit 自带） | speak() 轮询写法 |
-| 台词节拍化（有节奏感地说话） | song-dance 示例 | 台词按固定间隔发送 |
-| 播放音频+动作编排 | dance-party 示例 | play_audio_file + anim interrupt=False |
-| 联网取资源（天气/音乐 API） | jukebox 示例 | urllib 请求 + 音频转 wav + 动作池 |
+| 想学什么 | 看 `example-jukebox/src/main.py` 哪里 |
+|---|---|
+| 台词轮询播完（所有技能的地基） | `speak()` |
+| 联网取资源（任何 API 类技能通用） | `find_song()` / `download_song()`（urllib+重试+ffmpeg 转码） |
+| 音频播放与状态处理 | `play_audio_file` 调用处 + `music_really_over()`（状态抖动滤波） |
+| 音频持续时动作怎么发 | 主循环里 `play_animation(anim, interrupt=False)` |
+| 持续随机动作池 | `MOVE_POOL` + `next_move()` |
+| 换自己要的东西 | 顶部 `SONG_NAME` / `MOVE_POOL` 两个常量 |
 
-自己动手前，永远先跑一遍示例包（第 5 步流程），确认环境没问题再改。
+改之前先把原版跑通（第 5 步流程），确认环境没问题再动手。

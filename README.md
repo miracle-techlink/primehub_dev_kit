@@ -23,6 +23,7 @@ python3 primehub_publish.py search "你好"           # 自检：能搜 = 网络
 |---|---|
 | `SKILL_PUBLISH_GUIDE.md` | 完整手册（开发顺序、调试判读、失败码表、发布流程） |
 | `template-skill/` | 技能模板（复制成你的技能） |
+| `example-jukebox/` | 完整真实案例：点歌台（联网搜歌+节拍分析+随机伴舞，已上架 PrimeHub） |
 | `pack.py` | 打包器：技能目录 → `.rpk` |
 | `deploy_test.py` | 真机调试 harness（scp 到机器人跑） |
 | `primehub_publish.py` | PrimeHub 发布/删除/查询客户端 |
