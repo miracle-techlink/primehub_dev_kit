@@ -15,19 +15,23 @@
 """
 
 import json
+import os
 import random
 import subprocess
+import sys
 import time
 import urllib.parse
 import urllib.request
 
 # ★★★ 现场开发者改这里 ★★★
-# 点歌方式（默认=纯 API 点歌，不写死任何歌）：
-#   默认：每次运行联网抓网易云热歌榜 → 随机点一首 → gdstudio API 搜+下载+转 wav
-#   固定曲目（可选覆盖）：技能包放 media/songlist.txt（一行一首"歌名 歌手"）
-#                        或往下面 PLAYLIST 里加歌 = 常驻歌单
-# 已播记录 /tmp/jukebox_history.txt，尽量不重样；搜不到/下不动自动换下一首
-PLAYLIST = []               # 默认空 = 联网热歌榜随机；想固定曲目就加"歌名 歌手"
+# 点歌优先级（从高到低，取到第一个就点它）：
+#   ① 用户语音/启动参数：机器人把用户说的话传进来（argv[1:] 每词一个，或环境变量 JUKEBOX_REQUEST），
+#      例如「放稻香」→ 机器人传"放稻香" → 代码剥掉"放/来一首/我想听"等口癖 → 搜"稻香"
+#   ② 固定歌单：技能包 media/songlist.txt（一行一首）或下面 PLAYLIST
+#   ③ 兜底：联网热歌榜随机抽（纯 API，不写死任何歌）
+# 搜不到/下不动自动换下一首重试；已播记录 /tmp/jukebox_history.txt
+PLAYLIST = []               # 常驻歌单（可选）；空 = 语音参数 → 热歌榜
+REQUEST_ENV = "JUKEBOX_REQUEST"   # 机器人传歌名的环境变量名（和 argv 二选一）
 LAT_ANIM = 0.30           # anim 请求→真正起跳的实测延迟（提前发）
 LAT_MUSIC = 0.06          # 音频状态翻 1 与真实出声的差（实测 +0.056s）
 INTRO = "收到点歌！我去网上找这首歌，找到就马上开跳！"
@@ -77,11 +81,39 @@ def find_song(name):
     return songs[0] if songs else None
 
 
-# ---------- 点歌：默认联网热歌榜，歌单只是可选覆盖 ----------
+# ---------- 点歌：① 语音/启动参数 ② 固定歌单 ③ 热歌榜兜底 ----------
+# 机器人侧把用户说的话传进来的两条通道（都试）：
+#   a) 启动参数 argv：python main.py 稻香 / "放稻香"
+#   b) 环境变量 JUKEBOX_REQUEST="放稻香"
+VOICE_FILLERS = ("放", "来一首", "我想听", "我要听", "帮我放", "给我放", "点一首", "播一首",
+                 "唱一首", "跳一首", "放首", "来首", "听首", "点歌", "跳个舞", "点个",
+                 "请放", "想听", "音乐", "首歌", "点首歌")
+
+
+def user_request():
+    """剥掉口癖取歌名：「放稻香」→「稻香」；「放 周杰伦 晴天」→「周杰伦 晴天」。
+    剥完只剩口癖（「点首歌」）→ 没点歌，返回 None。"""
+    words = [w for w in sys.argv[1:] if w.strip()]
+    env = os.environ.get(REQUEST_ENV, "").strip()
+    if env and not words:
+        words = [env]
+    if not words:
+        return None
+    text = " ".join(words).strip()
+    # 反复剥口癖前缀（「帮我放来一首晴天」这种叠加也要剥干净；允许剥到空=全是口癖）
+    changed = True
+    while changed:
+        changed = False
+        for f in VOICE_FILLERS:
+            if text.startswith(f) and text:
+                text = text[len(f):].lstrip("一首个的 ")
+                changed = True
+    text = text.strip()
+    return text or None
+
+
 def load_songlist():
-    """点歌入口。默认联网抓热歌榜（每次不同）；media/songlist.txt 或 PLAYLIST 非空才固定曲目。"""
-    import os
-    # ① 固定歌单（可选）：技能包 media/songlist.txt + PLAYLIST
+    """固定歌单（可选）：技能包 media/songlist.txt + PLAYLIST。"""
     candidates = []
     here = os.path.dirname(os.path.abspath(__file__))
     for rel in ("media/songlist.txt", "../media/songlist.txt", "../../media/songlist.txt"):
@@ -89,25 +121,33 @@ def load_songlist():
         if os.path.exists(p):
             lines = [l.strip() for l in open(p, encoding="utf-8") if l.strip() and not l.startswith("#")]
             candidates += lines
-    candidates += PLAYLIST
-    # ② 默认：联网热歌榜（纯 API 点歌，每次运行随机不重样）
-    if not candidates:
-        try:
-            d = http_json(HOT_CHART_API)
-            for s in d.get("result", {}).get("songs", []):
-                artists = "/".join(a["name"] for a in s.get("artists", []))
-                candidates.append("%s %s" % (s.get("name"), artists))
-        except Exception:
-            pass
+    candidates += [p for p in PLAYLIST if p.strip()]
     return candidates
 
 
+def hot_chart():
+    """兜底歌单：联网热歌榜。"""
+    try:
+        d = http_json(HOT_CHART_API)
+        return ["%s %s" % (s.get("name"), "/".join(a["name"] for a in s.get("artists", [])))
+                for s in d.get("result", {}).get("songs", [])]
+    except Exception:
+        return []
+
+
 def pick_song():
-    """从歌单随机抽一首，尽量不重样（历史记录在 /tmp/jukebox_history.txt）。"""
-    import os
+    """点歌决策：① 用户说的歌名（原样优先，绝不随机换）→ ② 固定歌单随机 → ③ 热歌榜随机。
+    返回 (歌名, 来源标记)。①/② 记历史防重样；① 不挑重样（用户点名就是要这首）。"""
+    req = user_request()
+    if req:
+        return req, "user"
     songs = load_songlist()
+    source = "list"
     if not songs:
-        return None, "no songs"
+        songs = hot_chart()
+        source = "chart"
+    if not songs:
+        return None, "none"
     try:
         played = set(l.strip() for l in open(HISTORY, encoding="utf-8"))
     except OSError:
@@ -120,7 +160,7 @@ def pick_song():
             f.write(song + "\n")
     except OSError:
         pass
-    return song, ("%d/%d" % (len(fresh or songs), len(songs)))
+    return song, source
 
 
 def download_song(song):
@@ -248,14 +288,15 @@ def speak(text):
 
 # ---------- 演出 ----------
 speak(INTRO)
-requested, stat = pick_song()
-print("PICK: %s (%s)" % (requested, stat), flush=True)
+requested, source = pick_song()
+print("PICK: %s (source=%s)" % (requested, source), flush=True)
 if not requested:
     speak("网上没拉到歌单，稍后再试一次！")
     raise SystemExit("NO_SONGLIST")
-# 搜不到/下不动就自动换歌再试（最多 3 首）
+# 用户点名的歌搜不到/下不动 → 报歉 + 从热歌榜换一首继续（不静默换：点名失败要告诉用户）
 song = None
 path = None
+tried = [requested]
 for _ in range(3):
     song = find_song(requested)
     if not song:
@@ -266,8 +307,17 @@ for _ in range(3):
         if path:
             break
         print("DOWNLOAD_RETRY", flush=True)
-    requested, stat = pick_song()
-    print("PICK: %s (%s)" % (requested, stat), flush=True)
+    if source == "user":
+        speak("这首 %s 没找到能下载的版本，我换首热门的接着跳！" % requested)
+        source = "chart"
+    songs = [s for s in hot_chart() if s not in tried]
+    if not songs:
+        songs = [s for s in load_songlist() or hot_chart() if s not in tried]
+    if not songs:
+        break
+    requested = random.choice(songs)
+    tried.append(requested)
+    print("PICK: %s (source=fallback)" % requested, flush=True)
 if not path:
     speak("这首歌下载失败了，换一首试试！")
     raise SystemExit("DOWNLOAD_FAILED")
