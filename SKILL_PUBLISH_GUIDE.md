@@ -224,7 +224,7 @@ print("MY_SKILL_DONE steps=%d" % len(STEPS), flush=True)   # flush 必须
 
 ```bash
 cd primehub_dev_kit
-python3 pack.py my-skill          # → my-skill.rpk（固定结构 cfg/pkg.yaml + src/*.py）
+python3 pack.py my-skill          # → my-skill.rpk（要求 cfg/pkg.yaml 和 src/main.py）
 python3 -m zipfile -l my-skill.rpk   # 校验：必须含 cfg/pkg.yaml 和 src/main.py
 ```
 
